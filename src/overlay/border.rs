@@ -21,6 +21,7 @@ pub struct BorderOverlay {
     brush: Option<ID2D1SolidColorBrush>,
     thickness: f32,
     color: BorderColor,
+    last_overlay_rect: RECT,
 }
 
 impl BorderOverlay {
@@ -32,16 +33,15 @@ impl BorderOverlay {
 
         window::set_colorkey(hwnd);
 
-        let mut overlay = Self {
+        Some(Self {
             hwnd,
             factory,
             render_target: None,
             brush: None,
             thickness,
             color,
-        };
-        overlay.create_render_target();
-        Some(overlay)
+            last_overlay_rect: RECT::default(),
+        })
     }
 
     fn create_render_target(&mut self) {
@@ -85,6 +85,7 @@ impl BorderOverlay {
     }
 
     /// Update overlay position and redraw border around the target rect.
+    /// Only recreates the render target when the overlay size changes.
     pub fn update(&mut self, target_rect: &RECT) {
         let t = self.thickness as i32;
         let overlay_rect = RECT {
@@ -94,14 +95,39 @@ impl BorderOverlay {
             bottom: target_rect.bottom + t,
         };
 
+        // Skip if nothing changed
+        if overlay_rect == self.last_overlay_rect {
+            return;
+        }
+
+        let old_w = self.last_overlay_rect.right - self.last_overlay_rect.left;
+        let old_h = self.last_overlay_rect.bottom - self.last_overlay_rect.top;
+        let new_w = overlay_rect.right - overlay_rect.left;
+        let new_h = overlay_rect.bottom - overlay_rect.top;
+        let size_changed = new_w != old_w || new_h != old_h;
+
+        self.last_overlay_rect = overlay_rect;
+
         window::reposition_overlay(self.hwnd, &overlay_rect);
 
-        // Recreate render target at new size
-        self.render_target = None;
-        self.brush = None;
-        self.create_render_target();
+        // Only recreate render target and re-render when size changes.
+        // Position-only moves reuse the existing D2D content (border shape
+        // depends on size, not position).
+        if size_changed {
+            self.render_target = None;
+            self.brush = None;
+            self.create_render_target();
+            self.render(&overlay_rect);
+        }
+    }
 
-        self.render(&overlay_rect);
+    /// Move border to a new target on focus change.
+    /// Hides first to prevent ghost at the old position.
+    pub fn move_to(&mut self, target_rect: &RECT) {
+        window::hide_overlay(self.hwnd);
+        self.last_overlay_rect = RECT::default(); // force size recalc
+        self.update(target_rect);
+        window::show_overlay(self.hwnd);
     }
 
     fn render(&self, overlay_rect: &RECT) {
@@ -152,7 +178,4 @@ impl BorderOverlay {
         window::hide_overlay(self.hwnd);
     }
 
-    pub fn show(&self) {
-        window::show_overlay(self.hwnd);
-    }
 }

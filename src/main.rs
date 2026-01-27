@@ -123,11 +123,15 @@ fn main() {
                 WM_LOCATION_CHANGED => {
                     if app.config.border_enabled {
                         if let Some(ref focus) = app.focus {
-                            if let Some(new_rect) = window_info::get_extended_frame_bounds(
-                                HWND(focus.hwnd as *mut _),
-                            ) {
-                                if let Some(ref mut bo) = border_overlay {
-                                    bo.update(&new_rect);
+                            // Only update if our tracked window is still foreground
+                            let fg = GetForegroundWindow();
+                            if fg.0 as isize == focus.hwnd {
+                                if let Some(new_rect) = window_info::get_extended_frame_bounds(
+                                    HWND(focus.hwnd as *mut _),
+                                ) {
+                                    if let Some(ref mut bo) = border_overlay {
+                                        bo.update(&new_rect);
+                                    }
                                 }
                             }
                         }
@@ -139,12 +143,16 @@ fn main() {
                         TIMER_POLL => {
                             if app.config.border_enabled {
                                 if let Some(ref focus) = app.focus {
-                                    if let Some(new_rect) = window_info::get_extended_frame_bounds(
-                                        HWND(focus.hwnd as *mut _),
-                                    ) {
-                                        if new_rect != focus.window_rect {
-                                            if let Some(ref mut bo) = border_overlay {
-                                                bo.update(&new_rect);
+                                    // Only update if our tracked window is still foreground
+                                    let fg = GetForegroundWindow();
+                                    if fg.0 as isize == focus.hwnd {
+                                        if let Some(new_rect) = window_info::get_extended_frame_bounds(
+                                            HWND(focus.hwnd as *mut _),
+                                        ) {
+                                            if new_rect != focus.window_rect {
+                                                if let Some(ref mut bo) = border_overlay {
+                                                    bo.update(&new_rect);
+                                                }
                                             }
                                         }
                                     }
@@ -324,11 +332,10 @@ fn update_focus_state(
 
     let monitor_changed = app.update_focus(focus_state);
 
-    // Update border overlay
+    // Update border overlay — use move_to on focus change to hide→move→show
     if app.config.border_enabled {
         if let Some(ref mut bo) = border_overlay {
-            bo.update(&snapshot.rect);
-            bo.show();
+            bo.move_to(&snapshot.rect);
         }
     }
 
