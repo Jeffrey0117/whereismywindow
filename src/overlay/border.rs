@@ -126,14 +126,24 @@ impl BorderOverlay {
         let new_h = overlay_rect.bottom - overlay_rect.top;
         let size_changed = new_w != old_w || new_h != old_h;
 
-        self.last_overlay_rect = overlay_rect;
+        if size_changed {
+            // Alpha=0 protection: surface is invalidated on resize,
+            // hide content until re-render completes to avoid black flash.
+            window::set_fully_transparent(self.hwnd);
+        }
 
+        self.last_overlay_rect = overlay_rect;
         window::reposition_overlay(self.hwnd, &overlay_rect);
 
         if size_changed {
             self.render_target = None;
             self.create_render_target();
-            self.render(&overlay_rect);
+            if self.render(&overlay_rect) {
+                window::set_colorkey(self.hwnd);
+            } else {
+                // Render failed — hide overlay instead of showing black
+                window::hide_overlay(self.hwnd);
+            }
         }
     }
 
@@ -162,18 +172,22 @@ impl BorderOverlay {
         // Step 3: Recreate render target at new size and render
         self.render_target = None;
         self.create_render_target();
-        self.render(&overlay_rect);
 
-        // Step 4: Restore colorkey-only (non-magenta pixels become visible)
-        window::set_colorkey(self.hwnd);
+        if self.render(&overlay_rect) {
+            // Step 4: Restore colorkey-only (non-magenta pixels become visible)
+            window::set_colorkey(self.hwnd);
 
-        // Step 5: Update state and bring to front
-        self.last_overlay_rect = overlay_rect;
-        window::bring_to_front(self.hwnd);
+            // Step 5: Update state and bring to front
+            self.last_overlay_rect = overlay_rect;
+            window::bring_to_front(self.hwnd);
+        } else {
+            // Render failed — hide overlay instead of showing black
+            window::hide_overlay(self.hwnd);
+        }
     }
 
-    fn render(&self, overlay_rect: &RECT) {
-        let Some(rt) = &self.render_target else { return };
+    fn render(&self, overlay_rect: &RECT) -> bool {
+        let Some(rt) = &self.render_target else { return false };
 
         let w = (overlay_rect.right - overlay_rect.left) as f32;
         let h = (overlay_rect.bottom - overlay_rect.top) as f32;
@@ -189,7 +203,7 @@ impl BorderOverlay {
                 BorderStyle::Glow => self.render_glow(rt, w, h),
             }
 
-            let _ = rt.EndDraw(None, None);
+            rt.EndDraw(None, None).is_ok()
         }
     }
 

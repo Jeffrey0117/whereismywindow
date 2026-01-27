@@ -155,6 +155,12 @@ fn main() {
                                                 }
                                             }
                                         }
+                                    } else {
+                                        // Foreground changed away from tracked window —
+                                        // hide border until next WM_FOCUS_CHANGED updates it
+                                        if let Some(ref bo) = border_overlay {
+                                            bo.hide();
+                                        }
                                     }
                                 }
                             }
@@ -293,6 +299,12 @@ fn update_focus_state(
     indicators: &mut Option<MonitorIndicators>,
 ) {
     let Some(snapshot) = window_info::get_foreground_window_info() else {
+        // Focus went to desktop, taskbar, minimized window, etc.
+        // Hide the border so it doesn't linger on a stale position.
+        if let Some(ref bo) = border_overlay {
+            bo.hide();
+        }
+        app.focus = None;
         return;
     };
 
