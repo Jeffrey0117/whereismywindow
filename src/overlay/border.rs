@@ -138,9 +138,8 @@ impl BorderOverlay {
     }
 
     /// Move border to a new target on focus change.
-    /// hide → reposition → render → bring to front (shows + z-order top).
+    /// Force re-render at new position, then bring to front.
     pub fn move_to(&mut self, target_rect: &RECT) {
-        window::hide_overlay(self.hwnd);
         self.last_overlay_rect = RECT::default();
         self.update(target_rect);
         window::bring_to_front(self.hwnd);
