@@ -69,7 +69,7 @@ pub fn set_alpha(hwnd: HWND, alpha: u8) {
 }
 
 /// Reposition and resize an overlay window without activating it.
-/// Uses SWP_NOZORDER to avoid pushing other overlays (like badges) behind.
+/// Does NOT change visibility — caller controls show/hide separately.
 pub fn reposition_overlay(hwnd: HWND, rect: &RECT) {
     unsafe {
         let _ = SetWindowPos(
@@ -79,7 +79,7 @@ pub fn reposition_overlay(hwnd: HWND, rect: &RECT) {
             rect.top,
             rect.right - rect.left,
             rect.bottom - rect.top,
-            SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
+            SWP_NOACTIVATE | SWP_NOZORDER,
         );
     }
 }
