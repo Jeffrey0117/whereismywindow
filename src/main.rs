@@ -60,7 +60,7 @@ fn main() {
     let flash_overlay = FlashOverlay::new(config.flash_opacity);
 
     // Create monitor indicators (bottom-left corner badges)
-    // Use full_rect to position at actual screen bottom (badges are TOPMOST so won't be hidden)
+    // Use full_rect to position at absolute screen bottom (badges are TOPMOST so visible over taskbar)
     let monitor_rects: Vec<_> = app.monitors.iter().map(|m| m.full_rect).collect();
     let mut indicators = MonitorIndicators::new(&monitor_rects, &config.border_color);
 
@@ -74,6 +74,12 @@ fn main() {
         log::warn!("Failed to create monitor indicators");
     } else {
         log::info!("Monitor indicators created for {} monitors", monitor_rects.len());
+        // Show all badges initially if enabled
+        if config.indicator_enabled {
+            if let Some(ref ind) = indicators {
+                ind.show_all();
+            }
+        }
     }
 
     // Create system tray

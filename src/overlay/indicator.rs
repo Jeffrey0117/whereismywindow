@@ -19,20 +19,26 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use crate::config::BorderColor;
 use crate::overlay::window;
 
-const BADGE_W: u32 = 48;
-const BADGE_H: u32 = 36;
-const MARGIN: i32 = 12;
-const CORNER_RADIUS: f32 = 8.0;
+const BADGE_W: u32 = 40;
+const BADGE_H: u32 = 30;
+const MARGIN: i32 = 8;
+const CORNER_RADIUS: f32 = 6.0;
 
-fn border_color_to_d2d(c: &BorderColor) -> D2D1_COLOR_F {
-    D2D1_COLOR_F { r: c.r, g: c.g, b: c.b, a: 1.0 }
+fn border_color_to_d2d(c: &BorderColor, alpha: f32) -> D2D1_COLOR_F {
+    D2D1_COLOR_F { r: c.r, g: c.g, b: c.b, a: alpha }
 }
-const INACTIVE_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
-    r: 0.35,
-    g: 0.35,
-    b: 0.35,
-    a: 1.0,
-};
+
+const INACTIVE_ALPHA: f32 = 0.6;
+const ACTIVE_ALPHA: f32 = 0.8;
+
+fn inactive_color() -> D2D1_COLOR_F {
+    D2D1_COLOR_F {
+        r: 0.35,
+        g: 0.35,
+        b: 0.35,
+        a: INACTIVE_ALPHA,
+    }
+}
 const TEXT_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 1.0,
     g: 1.0,
@@ -57,7 +63,7 @@ struct Badge {
 
 impl MonitorIndicators {
     pub fn new(monitor_rects: &[RECT], active_color: &BorderColor) -> Option<Self> {
-        let d2d_active = border_color_to_d2d(active_color);
+        let d2d_active = border_color_to_d2d(active_color, ACTIVE_ALPHA);
         let mut badges = Vec::with_capacity(monitor_rects.len());
 
         for (i, mon_rect) in monitor_rects.iter().enumerate() {
@@ -147,7 +153,7 @@ impl MonitorIndicators {
 
     /// Update the active badge color (synced with border color).
     pub fn set_active_color(&mut self, color: &BorderColor) {
-        let d2d_color = border_color_to_d2d(color);
+        let d2d_color = border_color_to_d2d(color, ACTIVE_ALPHA);
         for badge in &mut self.badges {
             badge.active_color = d2d_color;
             if badge.is_active {
@@ -198,7 +204,7 @@ impl Badge {
             let bg_color = if self.is_active {
                 self.active_color
             } else {
-                INACTIVE_COLOR
+                inactive_color()
             };
             let Ok(bg_brush) = rt.CreateSolidColorBrush(&bg_color, None) else {
                 return;
@@ -213,7 +219,7 @@ impl Badge {
                 DWRITE_FONT_WEIGHT_BOLD,
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
-                18.0,
+                15.0,
                 windows::core::w!(""),
             ) else {
                 return;
