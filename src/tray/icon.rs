@@ -6,6 +6,7 @@ use tray_icon::{
 pub const MENU_TOGGLE_BORDER: &str = "toggle_border";
 pub const MENU_TOGGLE_FLASH: &str = "toggle_flash";
 pub const MENU_TOGGLE_INDICATOR: &str = "toggle_indicator";
+pub const MENU_BORDER_STYLE: &str = "border_style";
 pub const MENU_QUIT: &str = "quit";
 
 #[allow(dead_code)]
@@ -14,6 +15,7 @@ pub struct SystemTray {
     pub toggle_border_item: MenuItem,
     pub toggle_flash_item: MenuItem,
     pub toggle_indicator_item: MenuItem,
+    pub border_style_item: MenuItem,
     pub quit_item: MenuItem,
 }
 
@@ -24,6 +26,12 @@ impl SystemTray {
         let toggle_border_item = MenuItem::with_id(
             MENU_TOGGLE_BORDER,
             "Border: ON",
+            true,
+            None,
+        );
+        let border_style_item = MenuItem::with_id(
+            MENU_BORDER_STYLE,
+            "Style: Solid",
             true,
             None,
         );
@@ -48,6 +56,7 @@ impl SystemTray {
 
         let menu = Menu::new();
         let _ = menu.append(&toggle_border_item);
+        let _ = menu.append(&border_style_item);
         let _ = menu.append(&toggle_flash_item);
         let _ = menu.append(&toggle_indicator_item);
         let _ = menu.append(&PredefinedMenuItem::separator());
@@ -65,6 +74,7 @@ impl SystemTray {
             toggle_border_item,
             toggle_flash_item,
             toggle_indicator_item,
+            border_style_item,
             quit_item,
         })
     }
@@ -82,6 +92,10 @@ impl SystemTray {
     pub fn update_indicator_text(&self, enabled: bool) {
         let text = if enabled { "Indicator: ON" } else { "Indicator: OFF" };
         self.toggle_indicator_item.set_text(text);
+    }
+
+    pub fn update_border_style_text(&self, label: &str) {
+        self.border_style_item.set_text(&format!("Style: {}", label));
     }
 }
 

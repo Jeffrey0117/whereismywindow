@@ -23,8 +23,8 @@ use overlay::border::BorderOverlay;
 use overlay::flash::FlashOverlay;
 use overlay::indicator::MonitorIndicators;
 use tray::icon::{
-    self as tray_icon_mod, SystemTray, MENU_QUIT, MENU_TOGGLE_BORDER, MENU_TOGGLE_FLASH,
-    MENU_TOGGLE_INDICATOR,
+    self as tray_icon_mod, SystemTray, MENU_BORDER_STYLE, MENU_QUIT, MENU_TOGGLE_BORDER,
+    MENU_TOGGLE_FLASH, MENU_TOGGLE_INDICATOR,
 };
 
 const TIMER_POLL: usize = 1;
@@ -48,7 +48,7 @@ fn main() {
     app.monitors = monitors;
 
     // Create overlays
-    let mut border_overlay = BorderOverlay::new(config.border_color, config.border_thickness);
+    let mut border_overlay = BorderOverlay::new(config.border_color, config.border_thickness, config.border_style);
     let flash_overlay = FlashOverlay::new(config.flash_opacity);
 
     // Create monitor indicators (bottom-left corner badges)
@@ -237,6 +237,27 @@ fn main() {
                                 ind.show_all();
                             } else {
                                 ind.hide_all();
+                            }
+                        }
+                    }
+                    MENU_BORDER_STYLE => {
+                        let new_style = app.config.border_style.next();
+                        app.config.border_style = new_style;
+                        log::info!("Border style: {}", new_style.label());
+                        if let Some(ref t) = tray {
+                            t.update_border_style_text(new_style.label());
+                        }
+                        if let Some(ref mut bo) = border_overlay {
+                            bo.set_style(new_style);
+                            // Re-apply to current focus
+                            if app.config.border_enabled {
+                                if let Some(ref focus) = app.focus {
+                                    let clamped = clamp_to_monitor(
+                                        &focus.window_rect,
+                                        &focus.monitor_rect,
+                                    );
+                                    bo.move_to(&clamped);
+                                }
                             }
                         }
                     }

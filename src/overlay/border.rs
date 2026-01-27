@@ -3,29 +3,46 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
+    D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES,
     D2D1_PRESENT_OPTIONS_IMMEDIATELY, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 
-use crate::config::BorderColor;
+use crate::config::{BorderColor, BorderStyle};
 use crate::overlay::window;
+
+const GLOW_LAYERS: usize = 4;
+
+/// Glow layer definitions: (thickness_px, color)
+/// Outermost → innermost, each layer draws a frame at that offset.
+fn glow_colors(base: &BorderColor) -> [(f32, D2D1_COLOR_F); GLOW_LAYERS] {
+    [
+        (2.0, D2D1_COLOR_F { r: base.r * 0.15, g: base.g * 0.15, b: base.b * 0.15, a: 1.0 }),
+        (2.0, D2D1_COLOR_F { r: base.r * 0.35, g: base.g * 0.35, b: base.b * 0.35, a: 1.0 }),
+        (2.0, D2D1_COLOR_F { r: base.r * 0.65, g: base.g * 0.65, b: base.b * 0.65, a: 1.0 }),
+        (2.0, D2D1_COLOR_F { r: base.r, g: base.g, b: base.b, a: 1.0 }),
+    ]
+}
+
+fn glow_total_thickness() -> f32 {
+    GLOW_LAYERS as f32 * 2.0 // 8px total
+}
 
 /// Manages the border overlay rendering via Direct2D.
 pub struct BorderOverlay {
     pub hwnd: HWND,
     factory: ID2D1Factory,
     render_target: Option<ID2D1HwndRenderTarget>,
-    brush: Option<ID2D1SolidColorBrush>,
     thickness: f32,
     color: BorderColor,
+    style: BorderStyle,
     last_overlay_rect: RECT,
 }
 
 impl BorderOverlay {
-    pub fn new(color: BorderColor, thickness: f32) -> Option<Self> {
+    pub fn new(color: BorderColor, thickness: f32, style: BorderStyle) -> Option<Self> {
         let hwnd = window::create_overlay_window("WhereIsMyWindowBorder", 1, 1)?;
         let factory: ID2D1Factory = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok()?
@@ -37,11 +54,25 @@ impl BorderOverlay {
             hwnd,
             factory,
             render_target: None,
-            brush: None,
             thickness,
             color,
+            style,
             last_overlay_rect: RECT::default(),
         })
+    }
+
+    fn effective_thickness(&self) -> f32 {
+        match self.style {
+            BorderStyle::Solid => self.thickness,
+            BorderStyle::Glow => glow_total_thickness(),
+        }
+    }
+
+    pub fn set_style(&mut self, style: BorderStyle) {
+        if self.style != style {
+            self.style = style;
+            self.last_overlay_rect = RECT::default();
+        }
     }
 
     fn create_render_target(&mut self) {
@@ -70,24 +101,14 @@ impl BorderOverlay {
             };
 
             if let Ok(rt) = self.factory.CreateHwndRenderTarget(&render_props, &hwnd_props) {
-                let color = D2D1_COLOR_F {
-                    r: self.color.r,
-                    g: self.color.g,
-                    b: self.color.b,
-                    a: self.color.a,
-                };
-                if let Ok(brush) = rt.CreateSolidColorBrush(&color, None) {
-                    self.brush = Some(brush);
-                }
                 self.render_target = Some(rt);
             }
         }
     }
 
     /// Update overlay position and redraw border around the target rect.
-    /// Only recreates the render target when the overlay size changes.
     pub fn update(&mut self, target_rect: &RECT) {
-        let t = self.thickness as i32;
+        let t = self.effective_thickness() as i32;
         let overlay_rect = RECT {
             left: target_rect.left - t,
             top: target_rect.top - t,
@@ -95,7 +116,6 @@ impl BorderOverlay {
             bottom: target_rect.bottom + t,
         };
 
-        // Skip if nothing changed
         if overlay_rect == self.last_overlay_rect {
             return;
         }
@@ -110,72 +130,96 @@ impl BorderOverlay {
 
         window::reposition_overlay(self.hwnd, &overlay_rect);
 
-        // Only recreate render target and re-render when size changes.
-        // Position-only moves reuse the existing D2D content (border shape
-        // depends on size, not position).
         if size_changed {
             self.render_target = None;
-            self.brush = None;
             self.create_render_target();
             self.render(&overlay_rect);
         }
     }
 
     /// Move border to a new target on focus change.
-    /// Hides first to prevent ghost at the old position.
     pub fn move_to(&mut self, target_rect: &RECT) {
         window::hide_overlay(self.hwnd);
-        self.last_overlay_rect = RECT::default(); // force size recalc
+        self.last_overlay_rect = RECT::default();
         self.update(target_rect);
         window::show_overlay(self.hwnd);
     }
 
     fn render(&self, overlay_rect: &RECT) {
         let Some(rt) = &self.render_target else { return };
-        let Some(brush) = &self.brush else { return };
 
         let w = (overlay_rect.right - overlay_rect.left) as f32;
         let h = (overlay_rect.bottom - overlay_rect.top) as f32;
-        let t = self.thickness;
 
         unsafe {
             rt.BeginDraw();
-            // Clear to magenta — color-key makes these pixels fully transparent
-            let clear_color = D2D1_COLOR_F {
-                r: 1.0,
-                g: 0.0,
-                b: 1.0,
-                a: 1.0,
-            };
+
+            let clear_color = D2D1_COLOR_F { r: 1.0, g: 0.0, b: 1.0, a: 1.0 };
             rt.Clear(Some(&clear_color));
 
-            // Top border
-            rt.FillRectangle(
-                &D2D_RECT_F { left: 0.0, top: 0.0, right: w, bottom: t },
-                brush,
-            );
-            // Bottom border
-            rt.FillRectangle(
-                &D2D_RECT_F { left: 0.0, top: h - t, right: w, bottom: h },
-                brush,
-            );
-            // Left border
-            rt.FillRectangle(
-                &D2D_RECT_F { left: 0.0, top: t, right: t, bottom: h - t },
-                brush,
-            );
-            // Right border
-            rt.FillRectangle(
-                &D2D_RECT_F { left: w - t, top: t, right: w, bottom: h - t },
-                brush,
-            );
+            match self.style {
+                BorderStyle::Solid => self.render_solid(rt, w, h),
+                BorderStyle::Glow => self.render_glow(rt, w, h),
+            }
 
             let _ = rt.EndDraw(None, None);
+        }
+    }
+
+    unsafe fn render_solid(&self, rt: &ID2D1HwndRenderTarget, w: f32, h: f32) {
+        let t = self.thickness;
+        let color = D2D1_COLOR_F {
+            r: self.color.r,
+            g: self.color.g,
+            b: self.color.b,
+            a: 1.0,
+        };
+        let Ok(brush) = rt.CreateSolidColorBrush(&color, None) else { return };
+
+        rt.FillRectangle(&D2D_RECT_F { left: 0.0, top: 0.0, right: w, bottom: t }, &brush);
+        rt.FillRectangle(&D2D_RECT_F { left: 0.0, top: h - t, right: w, bottom: h }, &brush);
+        rt.FillRectangle(&D2D_RECT_F { left: 0.0, top: t, right: t, bottom: h - t }, &brush);
+        rt.FillRectangle(&D2D_RECT_F { left: w - t, top: t, right: w, bottom: h - t }, &brush);
+    }
+
+    unsafe fn render_glow(&self, rt: &ID2D1HwndRenderTarget, w: f32, h: f32) {
+        let layers = glow_colors(&self.color);
+        let mut offset: f32 = 0.0;
+
+        for (layer_t, color) in &layers {
+            let Ok(brush) = rt.CreateSolidColorBrush(color, None) else { return };
+
+            let inner_top = offset;
+            let inner_bottom = offset + layer_t;
+            let outer_w = w - offset;
+            let outer_h = h - offset;
+
+            // Top
+            rt.FillRectangle(
+                &D2D_RECT_F { left: offset, top: inner_top, right: outer_w, bottom: inner_bottom },
+                &brush,
+            );
+            // Bottom
+            rt.FillRectangle(
+                &D2D_RECT_F { left: offset, top: outer_h - layer_t, right: outer_w, bottom: outer_h },
+                &brush,
+            );
+            // Left
+            rt.FillRectangle(
+                &D2D_RECT_F { left: offset, top: inner_bottom, right: offset + layer_t, bottom: outer_h - layer_t },
+                &brush,
+            );
+            // Right
+            rt.FillRectangle(
+                &D2D_RECT_F { left: outer_w - layer_t, top: inner_bottom, right: outer_w, bottom: outer_h - layer_t },
+                &brush,
+            );
+
+            offset += layer_t;
         }
     }
 
     pub fn hide(&self) {
         window::hide_overlay(self.hwnd);
     }
-
 }
