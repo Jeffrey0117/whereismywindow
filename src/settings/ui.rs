@@ -38,18 +38,40 @@ impl SettingsApp {
     }
 }
 
+fn render_section<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    content: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.add_space(4.0);
+
+    // Section title
+    ui.label(egui::RichText::new(title).strong().size(14.0));
+    ui.add_space(6.0);
+
+    // Content with subtle background
+    let frame = egui::Frame::none()
+        .inner_margin(egui::Margin::same(12.0))
+        .fill(ui.visuals().faint_bg_color)
+        .rounding(4.0);
+
+    let result = frame.show(ui, content).inner;
+
+    ui.add_space(12.0);
+    result
+}
+
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("WhereIsMyWindow Settings");
-                ui.add_space(8.0);
+                ui.add_space(12.0);
 
                 // -- Border --
-                ui.group(|ui| {
-                    ui.strong("Border");
-                    ui.add_space(4.0);
+                render_section(ui, "Border", |ui| {
                     ui.checkbox(&mut self.draft.border_enabled, "Enable border");
+                    ui.add_space(6.0);
 
                     ui.horizontal(|ui| {
                         ui.label("Color:");
@@ -77,13 +99,10 @@ impl eframe::App for SettingsApp {
                     });
                 });
 
-                ui.add_space(8.0);
-
                 // -- Flash --
-                ui.group(|ui| {
-                    ui.strong("Flash");
-                    ui.add_space(4.0);
+                render_section(ui, "Flash", |ui| {
                     ui.checkbox(&mut self.draft.flash_enabled, "Flash on monitor change");
+                    ui.add_space(6.0);
 
                     ui.horizontal(|ui| {
                         ui.label("Duration:");
@@ -98,26 +117,18 @@ impl eframe::App for SettingsApp {
                     });
                 });
 
-                ui.add_space(8.0);
-
                 // -- Monitor Indicators --
-                ui.group(|ui| {
-                    ui.strong("Monitor Indicators");
-                    ui.add_space(4.0);
+                render_section(ui, "Monitor Indicators", |ui| {
                     ui.checkbox(&mut self.draft.indicator_enabled, "Show monitor badges");
                 });
 
-                ui.add_space(8.0);
-
                 // -- General --
-                ui.group(|ui| {
-                    ui.strong("General");
-                    ui.add_space(4.0);
+                render_section(ui, "General", |ui| {
                     ui.checkbox(&mut self.draft.auto_start, "Start with Windows");
                     ui.checkbox(&mut self.draft.reveal_hotkey_enabled, "Reveal hotkey (Ctrl+Shift+F)");
                 });
 
-                ui.add_space(16.0);
+                ui.add_space(12.0);
 
                 // -- Buttons --
                 ui.horizontal(|ui| {
