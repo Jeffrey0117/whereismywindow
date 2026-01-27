@@ -9,7 +9,7 @@ mod overlay;
 mod tray;
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -123,14 +123,14 @@ fn main() {
                 WM_LOCATION_CHANGED => {
                     if app.config.border_enabled {
                         if let Some(ref focus) = app.focus {
-                            // Only update if our tracked window is still foreground
                             let fg = GetForegroundWindow();
                             if fg.0 as isize == focus.hwnd {
                                 if let Some(new_rect) = window_info::get_extended_frame_bounds(
                                     HWND(focus.hwnd as *mut _),
                                 ) {
+                                    let clamped = clamp_to_monitor(&new_rect, &focus.monitor_rect);
                                     if let Some(ref mut bo) = border_overlay {
-                                        bo.update(&new_rect);
+                                        bo.update(&clamped);
                                     }
                                 }
                             }
@@ -143,15 +143,15 @@ fn main() {
                         TIMER_POLL => {
                             if app.config.border_enabled {
                                 if let Some(ref focus) = app.focus {
-                                    // Only update if our tracked window is still foreground
                                     let fg = GetForegroundWindow();
                                     if fg.0 as isize == focus.hwnd {
                                         if let Some(new_rect) = window_info::get_extended_frame_bounds(
                                             HWND(focus.hwnd as *mut _),
                                         ) {
-                                            if new_rect != focus.window_rect {
+                                            let clamped = clamp_to_monitor(&new_rect, &focus.monitor_rect);
+                                            if clamped != focus.window_rect {
                                                 if let Some(ref mut bo) = border_overlay {
-                                                    bo.update(&new_rect);
+                                                    bo.update(&clamped);
                                                 }
                                             }
                                         }
@@ -334,8 +334,9 @@ fn update_focus_state(
 
     // Update border overlay — use move_to on focus change to hide→move→show
     if app.config.border_enabled {
+        let clamped = clamp_to_monitor(&snapshot.rect, &monitor_rect);
         if let Some(ref mut bo) = border_overlay {
-            bo.move_to(&snapshot.rect);
+            bo.move_to(&clamped);
         }
     }
 
@@ -384,6 +385,18 @@ fn show_reveal_info(app: &App) {
             focus.title,
             focus.exe_name,
         );
+    }
+}
+
+/// Clamp a window rect so it doesn't extend beyond its monitor.
+/// Prevents the border overlay from leaking onto adjacent monitors
+/// (maximized windows have a few px overscan beyond the screen edge).
+fn clamp_to_monitor(rect: &RECT, monitor: &RECT) -> RECT {
+    RECT {
+        left: rect.left.max(monitor.left),
+        top: rect.top.max(monitor.top),
+        right: rect.right.min(monitor.right),
+        bottom: rect.bottom.min(monitor.bottom),
     }
 }
 
