@@ -1,13 +1,14 @@
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
-use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::Graphics::Gdi::UpdateWindow;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// Create a transparent, click-through, topmost overlay window.
 /// Uses WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW.
+/// DwmExtendFrameIntoClientArea enables per-pixel alpha via Direct2D premultiplied rendering.
 pub fn create_overlay_window(class_name: &str, width: i32, height: i32) -> Option<HWND> {
     unsafe {
         let hinstance = GetModuleHandleW(None).ok()?;
@@ -43,14 +44,14 @@ pub fn create_overlay_window(class_name: &str, width: i32, height: i32) -> Optio
             None,
             Some(hinstance.into()),
             None,
-        );
+        )
+        .ok()?;
 
-        if hwnd.is_err() {
-            return None;
-        }
-        let hwnd = hwnd.unwrap();
+        // Activate the layered window — set fully opaque at the window level.
+        // Per-pixel alpha is then handled by DWM + Direct2D premultiplied rendering.
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
 
-        // Enable per-pixel alpha via DWM
+        // Extend frame into client area for per-pixel alpha compositing
         let margins = MARGINS {
             cxLeftWidth: -1,
             cxRightWidth: -1,
@@ -100,13 +101,8 @@ unsafe extern "system" fn overlay_wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_DESTROY => {
-            LRESULT(0)
-        }
-        WM_NCHITTEST => {
-            // Always return transparent to clicks
-            LRESULT(-1) // HTTRANSPARENT
-        }
+        WM_DESTROY => LRESULT(0),
+        WM_NCHITTEST => LRESULT(-1), // HTTRANSPARENT
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
