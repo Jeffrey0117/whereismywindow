@@ -1,6 +1,5 @@
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::UpdateWindow;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -70,18 +69,33 @@ pub fn set_alpha(hwnd: HWND, alpha: u8) {
 }
 
 /// Reposition and resize an overlay window without activating it.
+/// Uses SWP_NOZORDER to avoid pushing other overlays (like badges) behind.
 pub fn reposition_overlay(hwnd: HWND, rect: &RECT) {
     unsafe {
         let _ = SetWindowPos(
             hwnd,
-            Some(HWND_TOPMOST),
+            None,
             rect.left,
             rect.top,
             rect.right - rect.left,
             rect.bottom - rect.top,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
         );
-        let _ = UpdateWindow(hwnd);
+    }
+}
+
+/// Bring an overlay window to the top of the TOPMOST z-order.
+pub fn bring_to_front(hwnd: HWND) {
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
     }
 }
 

@@ -27,13 +27,13 @@ const ACTIVE_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 0.0,
     g: 0.47,
     b: 0.84,
-    a: 0.92,
+    a: 1.0,
 };
 const INACTIVE_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
-    r: 0.3,
-    g: 0.3,
-    b: 0.3,
-    a: 0.5,
+    r: 0.35,
+    g: 0.35,
+    b: 0.35,
+    a: 1.0,
 };
 const TEXT_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 1.0,
@@ -101,14 +101,19 @@ impl MonitorIndicators {
         Some(Self { badges })
     }
 
-    /// Update which monitor is active and re-render changed badges.
+    /// Update which monitor is active; always re-render and bring to front.
     pub fn set_active(&mut self, active_index: usize) {
         for badge in &mut self.badges {
-            let was_active = badge.is_active;
             badge.is_active = badge.index == active_index;
-            if badge.is_active != was_active {
-                badge.render();
-            }
+            badge.render();
+        }
+        self.bring_to_front();
+    }
+
+    /// Bring all badge windows to the top of the TOPMOST z-order.
+    pub fn bring_to_front(&self) {
+        for badge in &self.badges {
+            window::bring_to_front(badge.hwnd);
         }
     }
 
@@ -126,6 +131,7 @@ impl MonitorIndicators {
         for badge in &self.badges {
             window::show_overlay(badge.hwnd);
         }
+        self.bring_to_front();
     }
 }
 
