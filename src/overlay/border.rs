@@ -30,6 +30,8 @@ impl BorderOverlay {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok()?
         };
 
+        window::set_colorkey(hwnd);
+
         let mut overlay = Self {
             hwnd,
             factory,
@@ -112,11 +114,12 @@ impl BorderOverlay {
 
         unsafe {
             rt.BeginDraw();
+            // Clear to magenta — color-key makes these pixels fully transparent
             let clear_color = D2D1_COLOR_F {
-                r: 0.0,
+                r: 1.0,
                 g: 0.0,
-                b: 0.0,
-                a: 0.0,
+                b: 1.0,
+                a: 1.0,
             };
             rt.Clear(Some(&clear_color));
 

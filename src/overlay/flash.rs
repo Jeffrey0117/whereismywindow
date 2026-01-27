@@ -1,6 +1,6 @@
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
+    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory,
@@ -16,7 +16,6 @@ use crate::overlay::window;
 pub struct FlashOverlay {
     pub hwnd: HWND,
     factory: ID2D1Factory,
-    opacity: f32,
 }
 
 impl FlashOverlay {
@@ -26,10 +25,12 @@ impl FlashOverlay {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok()?
         };
 
+        // Use whole-window alpha for flash transparency
+        window::set_alpha(hwnd, (opacity * 255.0) as u8);
+
         Some(Self {
             hwnd,
             factory,
-            opacity,
         })
     }
 
@@ -73,26 +74,14 @@ impl FlashOverlay {
 
             rt.BeginDraw();
 
-            // Semi-transparent blue flash
+            // Render opaque blue — window-level LWA_ALPHA controls transparency
             let color = D2D1_COLOR_F {
                 r: 0.0,
                 g: 0.47,
                 b: 0.84,
-                a: self.opacity,
+                a: 1.0,
             };
             rt.Clear(Some(&color));
-
-            let fill_rect = D2D_RECT_F {
-                left: 0.0,
-                top: 0.0,
-                right: w as f32,
-                bottom: h as f32,
-            };
-            let Ok(brush) = rt.CreateSolidColorBrush(&color, None) else {
-                let _ = rt.EndDraw(None, None);
-                return;
-            };
-            rt.FillRectangle(&fill_rect, &brush);
 
             let _ = rt.EndDraw(None, None);
         }
