@@ -60,6 +60,15 @@ pub fn set_colorkey(hwnd: HWND) {
     }
 }
 
+/// Make the entire window fully invisible by combining colorkey with alpha=0.
+/// The window stays visible to the system (not SW_HIDE), so D2D rendering
+/// still works normally. Call set_colorkey() to restore normal visibility.
+pub fn set_fully_transparent(hwnd: HWND) {
+    unsafe {
+        let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, 0, LWA_COLORKEY | LWA_ALPHA);
+    }
+}
+
 /// Set uniform alpha transparency for the entire window.
 /// Used by flash overlay.
 pub fn set_alpha(hwnd: HWND, alpha: u8) {

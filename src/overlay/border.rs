@@ -138,10 +138,37 @@ impl BorderOverlay {
     }
 
     /// Move border to a new target on focus change.
-    /// Force re-render at new position, then bring to front.
+    /// Uses alpha=0 to prevent ghost flash — window stays "visible" to the system
+    /// (so D2D works) but is fully invisible to the user during transition:
+    /// 1. Set alpha=0 (+ colorkey) — entire window invisible, but not SW_HIDE'd
+    /// 2. Reposition + resize (invisible, no ghost)
+    /// 3. D2D render (window is visible to system, render works correctly)
+    /// 4. Restore colorkey-only mode — rendered content becomes visible
+    /// 5. Bring to front
     pub fn move_to(&mut self, target_rect: &RECT) {
-        self.last_overlay_rect = RECT::default();
-        self.update(target_rect);
+        // Step 1: alpha=0 — fully invisible but D2D still functional
+        window::set_fully_transparent(self.hwnd);
+
+        // Step 2: Calculate new overlay rect and reposition
+        let t = self.effective_thickness() as i32;
+        let overlay_rect = RECT {
+            left: target_rect.left - t,
+            top: target_rect.top - t,
+            right: target_rect.right + t,
+            bottom: target_rect.bottom + t,
+        };
+        window::reposition_overlay(self.hwnd, &overlay_rect);
+
+        // Step 3: Recreate render target at new size and render
+        self.render_target = None;
+        self.create_render_target();
+        self.render(&overlay_rect);
+
+        // Step 4: Restore colorkey-only (non-magenta pixels become visible)
+        window::set_colorkey(self.hwnd);
+
+        // Step 5: Update state and bring to front
+        self.last_overlay_rect = overlay_rect;
         window::bring_to_front(self.hwnd);
     }
 
