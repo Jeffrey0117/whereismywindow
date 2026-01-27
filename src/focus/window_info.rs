@@ -35,13 +35,6 @@ pub fn get_foreground_window_info() -> Option<WindowSnapshot> {
 
         let title = get_window_title(hwnd);
         let exe_name = get_exe_name(hwnd);
-
-        // Skip shell UI windows (tray popup, taskbar, start menu, etc.)
-        // These are explorer.exe windows with no title — not real app windows.
-        if title.is_empty() && exe_name.eq_ignore_ascii_case("explorer.exe") {
-            return None;
-        }
-
         let rect = get_extended_frame_bounds(hwnd)?;
 
         Some(WindowSnapshot {
