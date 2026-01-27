@@ -5,6 +5,7 @@ use tray_icon::{
 
 pub const MENU_TOGGLE_BORDER: &str = "toggle_border";
 pub const MENU_TOGGLE_FLASH: &str = "toggle_flash";
+pub const MENU_TOGGLE_INDICATOR: &str = "toggle_indicator";
 pub const MENU_QUIT: &str = "quit";
 
 #[allow(dead_code)]
@@ -12,6 +13,7 @@ pub struct SystemTray {
     _tray: TrayIcon,
     pub toggle_border_item: MenuItem,
     pub toggle_flash_item: MenuItem,
+    pub toggle_indicator_item: MenuItem,
     pub quit_item: MenuItem,
 }
 
@@ -31,6 +33,12 @@ impl SystemTray {
             true,
             None,
         );
+        let toggle_indicator_item = MenuItem::with_id(
+            MENU_TOGGLE_INDICATOR,
+            "Indicator: ON",
+            true,
+            None,
+        );
         let quit_item = MenuItem::with_id(
             MENU_QUIT,
             "Quit",
@@ -41,6 +49,7 @@ impl SystemTray {
         let menu = Menu::new();
         let _ = menu.append(&toggle_border_item);
         let _ = menu.append(&toggle_flash_item);
+        let _ = menu.append(&toggle_indicator_item);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&quit_item);
 
@@ -55,6 +64,7 @@ impl SystemTray {
             _tray: tray,
             toggle_border_item,
             toggle_flash_item,
+            toggle_indicator_item,
             quit_item,
         })
     }
@@ -68,6 +78,11 @@ impl SystemTray {
         let text = if enabled { "Flash: ON" } else { "Flash: OFF" };
         self.toggle_flash_item.set_text(text);
     }
+
+    pub fn update_indicator_text(&self, enabled: bool) {
+        let text = if enabled { "Indicator: ON" } else { "Indicator: OFF" };
+        self.toggle_indicator_item.set_text(text);
+    }
 }
 
 /// Create a simple colored icon in memory (16x16 blue square).
@@ -76,7 +91,6 @@ fn create_default_icon() -> Option<Icon> {
     let mut rgba = Vec::with_capacity((size * size * 4) as usize);
     for _y in 0..size {
         for _x in 0..size {
-            // Blue icon with slight border
             rgba.push(0);    // R
             rgba.push(120);  // G
             rgba.push(215);  // B

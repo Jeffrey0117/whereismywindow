@@ -6,6 +6,7 @@
 pub struct Config {
     pub border_enabled: bool,
     pub flash_enabled: bool,
+    pub indicator_enabled: bool,
     pub border_color: BorderColor,
     pub border_thickness: f32,
     pub flash_duration_ms: u32,
@@ -33,6 +34,7 @@ impl Default for Config {
         Self {
             border_enabled: true,
             flash_enabled: true,
+            indicator_enabled: true,
             border_color: BorderColor::new(0.0, 0.47, 0.84, 0.9), // Blue
             border_thickness: 4.0,
             flash_duration_ms: 150,

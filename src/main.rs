@@ -21,7 +21,11 @@ use focus::window_info;
 use monitor::{enumeration, geometry};
 use overlay::border::BorderOverlay;
 use overlay::flash::FlashOverlay;
-use tray::icon::{self as tray_icon_mod, SystemTray, MENU_QUIT, MENU_TOGGLE_BORDER, MENU_TOGGLE_FLASH};
+use overlay::indicator::MonitorIndicators;
+use tray::icon::{
+    self as tray_icon_mod, SystemTray, MENU_QUIT, MENU_TOGGLE_BORDER, MENU_TOGGLE_FLASH,
+    MENU_TOGGLE_INDICATOR,
+};
 
 const TIMER_POLL: usize = 1;
 const TIMER_FLASH_HIDE: usize = 2;
@@ -47,11 +51,20 @@ fn main() {
     let mut border_overlay = BorderOverlay::new(config.border_color, config.border_thickness);
     let flash_overlay = FlashOverlay::new(config.flash_opacity);
 
+    // Create monitor indicators (bottom-left corner badges)
+    let monitor_rects: Vec<_> = app.monitors.iter().map(|m| m.full_rect).collect();
+    let mut indicators = MonitorIndicators::new(&monitor_rects);
+
     if border_overlay.is_none() {
         log::warn!("Failed to create border overlay");
     }
     if flash_overlay.is_none() {
         log::warn!("Failed to create flash overlay");
+    }
+    if indicators.is_none() {
+        log::warn!("Failed to create monitor indicators");
+    } else {
+        log::info!("Monitor indicators created for {} monitors", monitor_rects.len());
     }
 
     // Create system tray
@@ -85,7 +98,7 @@ fn main() {
     }
 
     // Do an initial focus check
-    update_focus_state(&mut app, &mut border_overlay, &flash_overlay);
+    update_focus_state(&mut app, &mut border_overlay, &flash_overlay, &mut indicators);
 
     // Message loop
     log::info!("Entering message loop");
@@ -99,10 +112,14 @@ fn main() {
 
             match msg.message {
                 WM_FOCUS_CHANGED => {
-                    update_focus_state(&mut app, &mut border_overlay, &flash_overlay);
+                    update_focus_state(
+                        &mut app,
+                        &mut border_overlay,
+                        &flash_overlay,
+                        &mut indicators,
+                    );
                 }
                 WM_LOCATION_CHANGED => {
-                    // Window moved/resized: update border position
                     if app.config.border_enabled {
                         if let Some(ref focus) = app.focus {
                             if let Some(new_rect) = window_info::get_extended_frame_bounds(
@@ -119,7 +136,6 @@ fn main() {
                     let timer_id = msg.wParam.0;
                     match timer_id {
                         TIMER_POLL => {
-                            // Poll for window movement (backup for EVENT_OBJECT_LOCATIONCHANGE)
                             if app.config.border_enabled {
                                 if let Some(ref focus) = app.focus {
                                     if let Some(new_rect) = window_info::get_extended_frame_bounds(
@@ -141,23 +157,18 @@ fn main() {
                             KillTimer(Some(msg_hwnd), TIMER_FLASH_HIDE).ok();
                         }
                         TIMER_HOTKEY_CHECK => {
-                            // Check for hotkey events via global-hotkey channel
                             if let Some(ref _hk) = hotkey_handler {
                                 if _hk.poll() {
-                                    // Ctrl+Shift+F was pressed - toggle reveal
                                     log::info!("Hotkey reveal triggered");
-                                    // Show all monitor info + highlight
                                     show_reveal_info(&app);
                                 }
                             }
 
-                            // Also check async key state to detect release
-                            let ctrl_down = GetAsyncKeyState(0x11) < 0; // VK_CONTROL
-                            let shift_down = GetAsyncKeyState(0x10) < 0; // VK_SHIFT
-                            let f_down = GetAsyncKeyState(0x46) < 0; // 'F'
+                            let ctrl_down = GetAsyncKeyState(0x11) < 0;
+                            let shift_down = GetAsyncKeyState(0x10) < 0;
+                            let f_down = GetAsyncKeyState(0x46) < 0;
                             if let Some(ref _hk) = hotkey_handler {
                                 if _hk.is_active && !(ctrl_down && shift_down && f_down) {
-                                    // Keys released
                                     log::info!("Hotkey reveal released");
                                 }
                             }
@@ -173,7 +184,10 @@ fn main() {
                 match id.as_str() {
                     MENU_TOGGLE_BORDER => {
                         app.config.border_enabled = !app.config.border_enabled;
-                        log::info!("Border: {}", if app.config.border_enabled { "ON" } else { "OFF" });
+                        log::info!(
+                            "Border: {}",
+                            if app.config.border_enabled { "ON" } else { "OFF" }
+                        );
                         if let Some(ref t) = tray {
                             t.update_border_text(app.config.border_enabled);
                         }
@@ -182,14 +196,39 @@ fn main() {
                                 bo.hide();
                             }
                         } else {
-                            update_focus_state(&mut app, &mut border_overlay, &flash_overlay);
+                            update_focus_state(
+                                &mut app,
+                                &mut border_overlay,
+                                &flash_overlay,
+                                &mut indicators,
+                            );
                         }
                     }
                     MENU_TOGGLE_FLASH => {
                         app.config.flash_enabled = !app.config.flash_enabled;
-                        log::info!("Flash: {}", if app.config.flash_enabled { "ON" } else { "OFF" });
+                        log::info!(
+                            "Flash: {}",
+                            if app.config.flash_enabled { "ON" } else { "OFF" }
+                        );
                         if let Some(ref t) = tray {
                             t.update_flash_text(app.config.flash_enabled);
+                        }
+                    }
+                    MENU_TOGGLE_INDICATOR => {
+                        app.config.indicator_enabled = !app.config.indicator_enabled;
+                        log::info!(
+                            "Indicator: {}",
+                            if app.config.indicator_enabled { "ON" } else { "OFF" }
+                        );
+                        if let Some(ref t) = tray {
+                            t.update_indicator_text(app.config.indicator_enabled);
+                        }
+                        if let Some(ref ind) = indicators {
+                            if app.config.indicator_enabled {
+                                ind.show_all();
+                            } else {
+                                ind.hide_all();
+                            }
                         }
                     }
                     MENU_QUIT => {
@@ -221,6 +260,7 @@ fn update_focus_state(
     app: &mut App,
     border_overlay: &mut Option<BorderOverlay>,
     flash_overlay: &Option<FlashOverlay>,
+    indicators: &mut Option<MonitorIndicators>,
 ) {
     let Some(snapshot) = window_info::get_foreground_window_info() else {
         return;
@@ -234,6 +274,11 @@ fn update_focus_state(
     }
     if let Some(ref fo) = flash_overlay {
         if snapshot.hwnd == fo.hwnd.0 as isize {
+            return;
+        }
+    }
+    if let Some(ref ind) = indicators {
+        if ind.hwnd_list().contains(&snapshot.hwnd) {
             return;
         }
     }
@@ -286,14 +331,25 @@ fn update_focus_state(
         }
     }
 
+    // Update monitor indicators
+    if app.config.indicator_enabled {
+        if let Some(ref mut ind) = indicators {
+            ind.set_active(monitor_index);
+        }
+    }
+
     // Flash on monitor change
     if monitor_changed && app.config.flash_enabled {
         if let Some(ref fo) = flash_overlay {
             fo.flash(&monitor_rect);
-            // Set timer to hide flash
             unsafe {
                 let msg_hwnd = HWND(tracker::msg_hwnd_value() as *mut _);
-                SetTimer(Some(msg_hwnd), TIMER_FLASH_HIDE, app.config.flash_duration_ms, None);
+                SetTimer(
+                    Some(msg_hwnd),
+                    TIMER_FLASH_HIDE,
+                    app.config.flash_duration_ms,
+                    None,
+                );
             }
         }
     }
