@@ -29,7 +29,7 @@ impl SystemTray {
         );
         let toggle_flash_item = MenuItem::with_id(
             MENU_TOGGLE_FLASH,
-            "Flash: ON",
+            "Flash: OFF",
             true,
             None,
         );

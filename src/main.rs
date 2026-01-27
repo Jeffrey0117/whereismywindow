@@ -52,7 +52,8 @@ fn main() {
     let flash_overlay = FlashOverlay::new(config.flash_opacity);
 
     // Create monitor indicators (bottom-left corner badges)
-    let monitor_rects: Vec<_> = app.monitors.iter().map(|m| m.full_rect).collect();
+    // Use work_rect (excludes taskbar) so badges aren't hidden behind the taskbar
+    let monitor_rects: Vec<_> = app.monitors.iter().map(|m| m.work_rect).collect();
     let mut indicators = MonitorIndicators::new(&monitor_rects);
 
     if border_overlay.is_none() {

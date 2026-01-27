@@ -33,7 +33,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             border_enabled: true,
-            flash_enabled: true,
+            flash_enabled: false,
             indicator_enabled: true,
             border_color: BorderColor::new(0.0, 0.47, 0.84, 0.9), // Blue
             border_thickness: 4.0,
