@@ -16,6 +16,7 @@ use windows::Win32::Graphics::DirectWrite::{
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 
+use crate::config::BorderColor;
 use crate::overlay::window;
 
 const BADGE_W: u32 = 48;
@@ -23,12 +24,9 @@ const BADGE_H: u32 = 36;
 const MARGIN: i32 = 12;
 const CORNER_RADIUS: f32 = 8.0;
 
-const ACTIVE_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
-    r: 0.0,
-    g: 0.47,
-    b: 0.84,
-    a: 1.0,
-};
+fn border_color_to_d2d(c: &BorderColor) -> D2D1_COLOR_F {
+    D2D1_COLOR_F { r: c.r, g: c.g, b: c.b, a: 1.0 }
+}
 const INACTIVE_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 0.35,
     g: 0.35,
@@ -54,10 +52,12 @@ struct Badge {
     dwrite_factory: IDWriteFactory,
     render_target: Option<ID2D1HwndRenderTarget>,
     is_active: bool,
+    active_color: D2D1_COLOR_F,
 }
 
 impl MonitorIndicators {
-    pub fn new(monitor_rects: &[RECT]) -> Option<Self> {
+    pub fn new(monitor_rects: &[RECT], active_color: &BorderColor) -> Option<Self> {
+        let d2d_active = border_color_to_d2d(active_color);
         let mut badges = Vec::with_capacity(monitor_rects.len());
 
         for (i, mon_rect) in monitor_rects.iter().enumerate() {
@@ -93,6 +93,7 @@ impl MonitorIndicators {
                 dwrite_factory,
                 render_target: None,
                 is_active: false,
+                active_color: d2d_active,
             };
             badge.ensure_render_target();
             badge.render();
@@ -143,6 +144,17 @@ impl MonitorIndicators {
         }
         self.bring_to_front();
     }
+
+    /// Update the active badge color (synced with border color).
+    pub fn set_active_color(&mut self, color: &BorderColor) {
+        let d2d_color = border_color_to_d2d(color);
+        for badge in &mut self.badges {
+            badge.active_color = d2d_color;
+            if badge.is_active {
+                badge.render();
+            }
+        }
+    }
 }
 
 impl Badge {
@@ -184,7 +196,7 @@ impl Badge {
 
         unsafe {
             let bg_color = if self.is_active {
-                ACTIVE_COLOR
+                self.active_color
             } else {
                 INACTIVE_COLOR
             };

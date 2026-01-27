@@ -9,8 +9,6 @@ mod overlay;
 mod settings;
 mod tray;
 
-use std::sync::mpsc;
-
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -24,7 +22,6 @@ use monitor::{enumeration, geometry};
 use overlay::border::BorderOverlay;
 use overlay::flash::FlashOverlay;
 use overlay::indicator::MonitorIndicators;
-use settings::data::SettingsMessage;
 use tray::icon::{
     self as tray_icon_mod, SystemTray, MENU_BORDER_STYLE, MENU_QUIT, MENU_SETTINGS,
     MENU_TOGGLE_BORDER, MENU_TOGGLE_FLASH, MENU_TOGGLE_INDICATOR,
@@ -38,6 +35,13 @@ const TIMER_SETTINGS_POLL: usize = 4;
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .init();
+
+    // Check for --settings subprocess mode
+    if std::env::args().any(|a| a == "--settings") {
+        let code = settings::launch::run_settings_main();
+        std::process::exit(code);
+    }
+
     log::info!("whereismywindow starting");
 
     let config = settings::persistence::load_config();
@@ -56,9 +60,9 @@ fn main() {
     let flash_overlay = FlashOverlay::new(config.flash_opacity);
 
     // Create monitor indicators (bottom-left corner badges)
-    // Use work_rect (excludes taskbar) so badges aren't hidden behind the taskbar
-    let monitor_rects: Vec<_> = app.monitors.iter().map(|m| m.work_rect).collect();
-    let mut indicators = MonitorIndicators::new(&monitor_rects);
+    // Use full_rect to position at actual screen bottom (badges are TOPMOST so won't be hidden)
+    let monitor_rects: Vec<_> = app.monitors.iter().map(|m| m.full_rect).collect();
+    let mut indicators = MonitorIndicators::new(&monitor_rects, &config.border_color);
 
     if border_overlay.is_none() {
         log::warn!("Failed to create border overlay");
@@ -106,7 +110,7 @@ fn main() {
     update_focus_state(&mut app, &mut border_overlay, &flash_overlay, &mut indicators);
 
     // Settings channel (populated when settings window is opened)
-    let mut settings_rx: Option<mpsc::Receiver<SettingsMessage>> = None;
+    let mut settings_child: Option<std::process::Child> = None;
 
     // Message loop
     log::info!("Entering message loop");
@@ -197,7 +201,7 @@ fn main() {
                         }
                         TIMER_SETTINGS_POLL => {
                             poll_settings(
-                                &mut settings_rx,
+                                &mut settings_child,
                                 &mut app,
                                 &mut border_overlay,
                                 &flash_overlay,
@@ -286,9 +290,11 @@ fn main() {
                         }
                     }
                     MENU_SETTINGS => {
-                        if settings_rx.is_none() {
-                            if let Some(rx) = settings::launch::open_settings(&app.config) {
-                                settings_rx = Some(rx);
+                        if settings_child.is_none() {
+                            // Save current config so subprocess reads up-to-date state
+                            settings::persistence::save_config(&app.config);
+                            if let Some(child) = settings::launch::open_settings() {
+                                settings_child = Some(child);
                                 SetTimer(Some(msg_hwnd), TIMER_SETTINGS_POLL, 100, None);
                                 log::info!("Settings window opened");
                             }
@@ -309,6 +315,11 @@ fn main() {
         }
     }
 
+    // Kill settings subprocess if still running
+    if let Some(ref mut child) = settings_child {
+        let _ = child.kill();
+    }
+
     // Cleanup
     tracker::unhook(focus_hook, location_hook);
     unsafe {
@@ -321,10 +332,9 @@ fn main() {
     log::info!("whereismywindow exiting");
 }
 
-/// Poll the settings channel and apply changes.
-/// Drains all pending messages to avoid losing Apply before Closed.
+/// Poll the settings subprocess and apply changes when it exits.
 fn poll_settings(
-    settings_rx: &mut Option<mpsc::Receiver<SettingsMessage>>,
+    settings_child: &mut Option<std::process::Child>,
     app: &mut App,
     border_overlay: &mut Option<BorderOverlay>,
     flash_overlay: &Option<FlashOverlay>,
@@ -332,101 +342,94 @@ fn poll_settings(
     tray: &Option<SystemTray>,
     msg_hwnd: HWND,
 ) {
-    let rx = match settings_rx.as_ref() {
-        Some(rx) => rx,
+    let child = match settings_child.as_mut() {
+        Some(c) => c,
         None => return,
     };
 
-    loop {
-        match rx.try_recv() {
-            Ok(SettingsMessage::Apply(data)) => {
-                let new_config = data.to_config();
-                log::info!("Applying settings from panel");
+    let applied = match settings::launch::poll_child(child) {
+        Some(applied) => applied,
+        None => return, // still running
+    };
 
-                // Update border overlay
-                if let Some(ref mut bo) = border_overlay {
-                    if app.config.border_color != new_config.border_color {
-                        bo.set_color(new_config.border_color);
-                    }
-                    if (app.config.border_thickness - new_config.border_thickness).abs() > f32::EPSILON {
-                        bo.set_thickness(new_config.border_thickness);
-                    }
-                    if app.config.border_style != new_config.border_style {
-                        bo.set_style(new_config.border_style);
-                    }
-                }
+    // Child has exited
+    *settings_child = None;
+    unsafe {
+        KillTimer(Some(msg_hwnd), TIMER_SETTINGS_POLL).ok();
+    }
 
-                // Update flash opacity
-                if let Some(ref fo) = flash_overlay {
-                    if (app.config.flash_opacity - new_config.flash_opacity).abs() > f32::EPSILON {
-                        fo.set_opacity(new_config.flash_opacity);
-                    }
-                }
+    if !applied {
+        log::info!("Settings closed without applying");
+        return;
+    }
 
-                // Update indicator visibility
-                if app.config.indicator_enabled != new_config.indicator_enabled {
-                    if let Some(ref ind) = indicators {
-                        if new_config.indicator_enabled {
-                            ind.show_all();
-                        } else {
-                            ind.hide_all();
-                        }
-                    }
-                }
+    // Reload config from disk (subprocess already saved it)
+    let new_config = settings::persistence::load_config();
+    log::info!("Applying reloaded settings");
 
-                // Handle border visibility change
-                let border_was_enabled = app.config.border_enabled;
+    // Update border overlay
+    if let Some(ref mut bo) = border_overlay {
+        if app.config.border_color != new_config.border_color {
+            bo.set_color(new_config.border_color);
+        }
+        if (app.config.border_thickness - new_config.border_thickness).abs() > f32::EPSILON {
+            bo.set_thickness(new_config.border_thickness);
+        }
+        if app.config.border_style != new_config.border_style {
+            bo.set_style(new_config.border_style);
+        }
+    }
 
-                // Update tray menu labels
-                if let Some(ref t) = tray {
-                    t.update_border_text(new_config.border_enabled);
-                    t.update_flash_text(new_config.flash_enabled);
-                    t.update_indicator_text(new_config.indicator_enabled);
-                    t.update_border_style_text(new_config.border_style.label());
-                }
+    // Update flash opacity
+    if let Some(ref fo) = flash_overlay {
+        if (app.config.flash_opacity - new_config.flash_opacity).abs() > f32::EPSILON {
+            fo.set_opacity(new_config.flash_opacity);
+        }
+    }
 
-                // Handle auto-start
-                if app.config.auto_start != new_config.auto_start {
-                    settings::autostart::set_auto_start(new_config.auto_start);
-                }
-
-                // Apply config
-                app.config = new_config;
-
-                // If border was just enabled or settings changed, re-apply to current focus
-                if app.config.border_enabled {
-                    if let Some(ref focus) = app.focus {
-                        let clamped = clamp_to_monitor(&focus.window_rect, &focus.monitor_rect);
-                        if let Some(ref mut bo) = border_overlay {
-                            bo.move_to(&clamped);
-                        }
-                    }
-                } else if border_was_enabled {
-                    if let Some(ref bo) = border_overlay {
-                        bo.hide();
-                    }
-                }
-
-                // Save to disk
-                settings::persistence::save_config(&app.config);
+    // Update indicator visibility
+    if app.config.indicator_enabled != new_config.indicator_enabled {
+        if let Some(ref ind) = indicators {
+            if new_config.indicator_enabled {
+                ind.show_all();
+            } else {
+                ind.hide_all();
             }
-            Ok(SettingsMessage::Closed) => {
-                log::info!("Settings window closed");
-                *settings_rx = None;
-                unsafe {
-                    KillTimer(Some(msg_hwnd), TIMER_SETTINGS_POLL).ok();
-                }
-                return;
+        }
+    }
+
+    // Update indicator badge active color to match border color
+    if app.config.border_color != new_config.border_color {
+        if let Some(ref mut ind) = indicators {
+            ind.set_active_color(&new_config.border_color);
+        }
+    }
+
+    // Handle border visibility change
+    let border_was_enabled = app.config.border_enabled;
+
+    // Update tray menu labels
+    if let Some(ref t) = tray {
+        t.update_border_text(new_config.border_enabled);
+        t.update_flash_text(new_config.flash_enabled);
+        t.update_indicator_text(new_config.indicator_enabled);
+        t.update_border_style_text(new_config.border_style.label());
+    }
+
+    // Apply config (auto-start already handled by subprocess)
+    app.config = new_config;
+
+    // If border was just enabled or settings changed, re-apply to current focus
+    if app.config.border_enabled {
+        if let Some(ref focus) = app.focus {
+            let clamped = clamp_to_monitor(&focus.window_rect, &focus.monitor_rect);
+            if let Some(ref mut bo) = border_overlay {
+                bo.move_to(&clamped);
             }
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                log::info!("Settings channel disconnected");
-                *settings_rx = None;
-                unsafe {
-                    KillTimer(Some(msg_hwnd), TIMER_SETTINGS_POLL).ok();
-                }
-                return;
-            }
+        }
+    } else if border_was_enabled {
+        if let Some(ref bo) = border_overlay {
+            bo.hide();
         }
     }
 }
