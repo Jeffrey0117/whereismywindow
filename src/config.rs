@@ -64,7 +64,7 @@ impl Default for Config {
             flash_duration_ms: 150,
             flash_opacity: 0.25,
             reveal_hotkey_enabled: true,
-            poll_interval_ms: 16, // ~60fps
+            poll_interval_ms: 100, // 10fps fallback — WM_LOCATION_CHANGED handles real-time
         }
     }
 }

@@ -3,7 +3,7 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, D2D1_ROUNDED_RECT, ID2D1Factory,
+    D2D1CreateFactory, D2D1_ROUNDED_RECT, ID2D1Factory, ID2D1HwndRenderTarget,
     D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED,
     D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_IMMEDIATELY,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -52,6 +52,7 @@ struct Badge {
     index: usize,
     d2d_factory: ID2D1Factory,
     dwrite_factory: IDWriteFactory,
+    render_target: Option<ID2D1HwndRenderTarget>,
     is_active: bool,
 }
 
@@ -85,13 +86,15 @@ impl MonitorIndicators {
 
             window::set_colorkey(hwnd);
 
-            let badge = Badge {
+            let mut badge = Badge {
                 hwnd,
                 index: i,
                 d2d_factory,
                 dwrite_factory,
+                render_target: None,
                 is_active: false,
             };
+            badge.ensure_render_target();
             badge.render();
             window::show_overlay(hwnd);
 
@@ -101,13 +104,20 @@ impl MonitorIndicators {
         Some(Self { badges })
     }
 
-    /// Update which monitor is active; always re-render and bring to front.
+    /// Update which monitor is active; only re-render badges that changed.
     pub fn set_active(&mut self, active_index: usize) {
+        let mut changed = false;
         for badge in &mut self.badges {
-            badge.is_active = badge.index == active_index;
-            badge.render();
+            let new_active = badge.index == active_index;
+            if badge.is_active != new_active {
+                badge.is_active = new_active;
+                badge.render();
+                changed = true;
+            }
         }
-        self.bring_to_front();
+        if changed {
+            self.bring_to_front();
+        }
     }
 
     /// Bring all badge windows to the top of the TOPMOST z-order.
@@ -136,7 +146,10 @@ impl MonitorIndicators {
 }
 
 impl Badge {
-    fn render(&self) {
+    fn ensure_render_target(&mut self) {
+        if self.render_target.is_some() {
+            return;
+        }
         unsafe {
             let render_props = D2D1_RENDER_TARGET_PROPERTIES {
                 r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -156,13 +169,20 @@ impl Badge {
                 presentOptions: D2D1_PRESENT_OPTIONS_IMMEDIATELY,
             };
 
-            let Ok(rt) = self
+            if let Ok(rt) = self
                 .d2d_factory
                 .CreateHwndRenderTarget(&render_props, &hwnd_props)
-            else {
-                return;
-            };
+            {
+                self.render_target = Some(rt);
+            }
+        }
+    }
 
+    fn render(&mut self) {
+        self.ensure_render_target();
+        let Some(rt) = &self.render_target else { return };
+
+        unsafe {
             let bg_color = if self.is_active {
                 ACTIVE_COLOR
             } else {
@@ -192,7 +212,6 @@ impl Badge {
 
             rt.BeginDraw();
 
-            // Clear to magenta — color-key makes these pixels fully transparent
             let clear = D2D1_COLOR_F {
                 r: 1.0,
                 g: 0.0,
@@ -201,7 +220,6 @@ impl Badge {
             };
             rt.Clear(Some(&clear));
 
-            // Rounded rectangle background
             let rounded_rect = D2D1_ROUNDED_RECT {
                 rect: D2D_RECT_F {
                     left: 0.0,
@@ -214,7 +232,6 @@ impl Badge {
             };
             rt.FillRoundedRectangle(&rounded_rect, &bg_brush);
 
-            // Monitor number text
             let label = format!("{}", self.index + 1);
             let label_wide: Vec<u16> = label.encode_utf16().collect();
             let layout_rect = D2D_RECT_F {
