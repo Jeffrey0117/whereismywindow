@@ -75,6 +75,18 @@ impl BorderOverlay {
         }
     }
 
+    pub fn set_color(&mut self, color: BorderColor) {
+        self.color = color;
+        self.last_overlay_rect = RECT::default();
+    }
+
+    pub fn set_thickness(&mut self, thickness: f32) {
+        if (self.thickness - thickness).abs() > f32::EPSILON {
+            self.thickness = thickness;
+            self.last_overlay_rect = RECT::default();
+        }
+    }
+
     fn create_render_target(&mut self) {
         unsafe {
             let mut client_rect = RECT::default();

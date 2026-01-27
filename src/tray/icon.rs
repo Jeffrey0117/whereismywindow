@@ -3,10 +3,13 @@ use tray_icon::{
     TrayIcon, TrayIconBuilder, Icon,
 };
 
+use crate::config::Config;
+
 pub const MENU_TOGGLE_BORDER: &str = "toggle_border";
 pub const MENU_TOGGLE_FLASH: &str = "toggle_flash";
 pub const MENU_TOGGLE_INDICATOR: &str = "toggle_indicator";
 pub const MENU_BORDER_STYLE: &str = "border_style";
+pub const MENU_SETTINGS: &str = "settings";
 pub const MENU_QUIT: &str = "quit";
 
 #[allow(dead_code)]
@@ -16,34 +19,45 @@ pub struct SystemTray {
     pub toggle_flash_item: MenuItem,
     pub toggle_indicator_item: MenuItem,
     pub border_style_item: MenuItem,
+    pub settings_item: MenuItem,
     pub quit_item: MenuItem,
 }
 
+fn on_off(enabled: bool) -> &'static str {
+    if enabled { "ON" } else { "OFF" }
+}
+
 impl SystemTray {
-    pub fn new() -> Option<Self> {
+    pub fn new(config: &Config) -> Option<Self> {
         let icon = create_default_icon()?;
 
         let toggle_border_item = MenuItem::with_id(
             MENU_TOGGLE_BORDER,
-            "Border: ON",
+            format!("Border: {}", on_off(config.border_enabled)),
             true,
             None,
         );
         let border_style_item = MenuItem::with_id(
             MENU_BORDER_STYLE,
-            "Style: Solid",
+            format!("Style: {}", config.border_style.label()),
             true,
             None,
         );
         let toggle_flash_item = MenuItem::with_id(
             MENU_TOGGLE_FLASH,
-            "Flash: OFF",
+            format!("Flash: {}", on_off(config.flash_enabled)),
             true,
             None,
         );
         let toggle_indicator_item = MenuItem::with_id(
             MENU_TOGGLE_INDICATOR,
-            "Indicator: ON",
+            format!("Indicator: {}", on_off(config.indicator_enabled)),
+            true,
+            None,
+        );
+        let settings_item = MenuItem::with_id(
+            MENU_SETTINGS,
+            "Settings...",
             true,
             None,
         );
@@ -60,6 +74,8 @@ impl SystemTray {
         let _ = menu.append(&toggle_flash_item);
         let _ = menu.append(&toggle_indicator_item);
         let _ = menu.append(&PredefinedMenuItem::separator());
+        let _ = menu.append(&settings_item);
+        let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&quit_item);
 
         let tray = TrayIconBuilder::new()
@@ -75,22 +91,23 @@ impl SystemTray {
             toggle_flash_item,
             toggle_indicator_item,
             border_style_item,
+            settings_item,
             quit_item,
         })
     }
 
     pub fn update_border_text(&self, enabled: bool) {
-        let text = if enabled { "Border: ON" } else { "Border: OFF" };
+        let text = format!("Border: {}", on_off(enabled));
         self.toggle_border_item.set_text(text);
     }
 
     pub fn update_flash_text(&self, enabled: bool) {
-        let text = if enabled { "Flash: ON" } else { "Flash: OFF" };
+        let text = format!("Flash: {}", on_off(enabled));
         self.toggle_flash_item.set_text(text);
     }
 
     pub fn update_indicator_text(&self, enabled: bool) {
-        let text = if enabled { "Indicator: ON" } else { "Indicator: OFF" };
+        let text = format!("Indicator: {}", on_off(enabled));
         self.toggle_indicator_item.set_text(text);
     }
 

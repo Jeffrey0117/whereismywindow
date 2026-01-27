@@ -41,6 +41,10 @@ impl FlashOverlay {
         window::show_overlay(self.hwnd);
     }
 
+    pub fn set_opacity(&self, opacity: f32) {
+        window::set_alpha(self.hwnd, (opacity * 255.0) as u8);
+    }
+
     pub fn hide(&self) {
         window::hide_overlay(self.hwnd);
     }

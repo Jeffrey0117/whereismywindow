@@ -1,7 +1,9 @@
 /// Application configuration (colors, hotkey, toggles).
-/// All values are compile-time defaults; runtime toggling via tray menu.
+/// All values have compile-time defaults; runtime changes via tray menu or settings panel.
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum BorderStyle {
     Solid,
     Glow,
@@ -24,7 +26,7 @@ impl BorderStyle {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub border_enabled: bool,
     pub flash_enabled: bool,
@@ -36,9 +38,11 @@ pub struct Config {
     pub flash_opacity: f32,
     pub reveal_hotkey_enabled: bool,
     pub poll_interval_ms: u32,
+    #[serde(default)]
+    pub auto_start: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BorderColor {
     pub r: f32,
     pub g: f32,
@@ -65,6 +69,7 @@ impl Default for Config {
             flash_opacity: 0.25,
             reveal_hotkey_enabled: true,
             poll_interval_ms: 100, // 10fps fallback — WM_LOCATION_CHANGED handles real-time
+            auto_start: false,
         }
     }
 }

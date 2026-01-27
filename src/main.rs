@@ -6,7 +6,10 @@ mod focus;
 mod hotkey;
 mod monitor;
 mod overlay;
+mod settings;
 mod tray;
+
+use std::sync::mpsc;
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -15,28 +18,29 @@ use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use app::{App, FocusState};
-use config::Config;
 use focus::tracker::{self, WM_FOCUS_CHANGED, WM_LOCATION_CHANGED};
 use focus::window_info;
 use monitor::{enumeration, geometry};
 use overlay::border::BorderOverlay;
 use overlay::flash::FlashOverlay;
 use overlay::indicator::MonitorIndicators;
+use settings::data::SettingsMessage;
 use tray::icon::{
-    self as tray_icon_mod, SystemTray, MENU_BORDER_STYLE, MENU_QUIT, MENU_TOGGLE_BORDER,
-    MENU_TOGGLE_FLASH, MENU_TOGGLE_INDICATOR,
+    self as tray_icon_mod, SystemTray, MENU_BORDER_STYLE, MENU_QUIT, MENU_SETTINGS,
+    MENU_TOGGLE_BORDER, MENU_TOGGLE_FLASH, MENU_TOGGLE_INDICATOR,
 };
 
 const TIMER_POLL: usize = 1;
 const TIMER_FLASH_HIDE: usize = 2;
 const TIMER_HOTKEY_CHECK: usize = 3;
+const TIMER_SETTINGS_POLL: usize = 4;
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .init();
     log::info!("whereismywindow starting");
 
-    let config = Config::default();
+    let config = settings::persistence::load_config();
 
     // Enumerate monitors
     let monitors = enumeration::enumerate_monitors();
@@ -69,7 +73,7 @@ fn main() {
     }
 
     // Create system tray
-    let tray = SystemTray::new();
+    let tray = SystemTray::new(&config);
     if tray.is_none() {
         log::warn!("Failed to create system tray icon");
     }
@@ -100,6 +104,9 @@ fn main() {
 
     // Do an initial focus check
     update_focus_state(&mut app, &mut border_overlay, &flash_overlay, &mut indicators);
+
+    // Settings channel (populated when settings window is opened)
+    let mut settings_rx: Option<mpsc::Receiver<SettingsMessage>> = None;
 
     // Message loop
     log::info!("Entering message loop");
@@ -188,6 +195,17 @@ fn main() {
                                 }
                             }
                         }
+                        TIMER_SETTINGS_POLL => {
+                            poll_settings(
+                                &mut settings_rx,
+                                &mut app,
+                                &mut border_overlay,
+                                &flash_overlay,
+                                &mut indicators,
+                                &tray,
+                                msg_hwnd,
+                            );
+                        }
                         _ => {}
                     }
                 }
@@ -267,6 +285,17 @@ fn main() {
                             }
                         }
                     }
+                    MENU_SETTINGS => {
+                        if settings_rx.is_none() {
+                            if let Some(rx) = settings::launch::open_settings(&app.config) {
+                                settings_rx = Some(rx);
+                                SetTimer(Some(msg_hwnd), TIMER_SETTINGS_POLL, 100, None);
+                                log::info!("Settings window opened");
+                            }
+                        } else {
+                            log::info!("Settings window already open");
+                        }
+                    }
                     MENU_QUIT => {
                         log::info!("Quit requested");
                         PostQuitMessage(0);
@@ -285,10 +314,121 @@ fn main() {
     unsafe {
         KillTimer(Some(msg_hwnd), TIMER_POLL).ok();
         KillTimer(Some(msg_hwnd), TIMER_HOTKEY_CHECK).ok();
+        KillTimer(Some(msg_hwnd), TIMER_SETTINGS_POLL).ok();
         let _ = DestroyWindow(msg_hwnd);
     }
 
     log::info!("whereismywindow exiting");
+}
+
+/// Poll the settings channel and apply changes.
+/// Drains all pending messages to avoid losing Apply before Closed.
+fn poll_settings(
+    settings_rx: &mut Option<mpsc::Receiver<SettingsMessage>>,
+    app: &mut App,
+    border_overlay: &mut Option<BorderOverlay>,
+    flash_overlay: &Option<FlashOverlay>,
+    indicators: &mut Option<MonitorIndicators>,
+    tray: &Option<SystemTray>,
+    msg_hwnd: HWND,
+) {
+    let rx = match settings_rx.as_ref() {
+        Some(rx) => rx,
+        None => return,
+    };
+
+    loop {
+        match rx.try_recv() {
+            Ok(SettingsMessage::Apply(data)) => {
+                let new_config = data.to_config();
+                log::info!("Applying settings from panel");
+
+                // Update border overlay
+                if let Some(ref mut bo) = border_overlay {
+                    if app.config.border_color != new_config.border_color {
+                        bo.set_color(new_config.border_color);
+                    }
+                    if (app.config.border_thickness - new_config.border_thickness).abs() > f32::EPSILON {
+                        bo.set_thickness(new_config.border_thickness);
+                    }
+                    if app.config.border_style != new_config.border_style {
+                        bo.set_style(new_config.border_style);
+                    }
+                }
+
+                // Update flash opacity
+                if let Some(ref fo) = flash_overlay {
+                    if (app.config.flash_opacity - new_config.flash_opacity).abs() > f32::EPSILON {
+                        fo.set_opacity(new_config.flash_opacity);
+                    }
+                }
+
+                // Update indicator visibility
+                if app.config.indicator_enabled != new_config.indicator_enabled {
+                    if let Some(ref ind) = indicators {
+                        if new_config.indicator_enabled {
+                            ind.show_all();
+                        } else {
+                            ind.hide_all();
+                        }
+                    }
+                }
+
+                // Handle border visibility change
+                let border_was_enabled = app.config.border_enabled;
+
+                // Update tray menu labels
+                if let Some(ref t) = tray {
+                    t.update_border_text(new_config.border_enabled);
+                    t.update_flash_text(new_config.flash_enabled);
+                    t.update_indicator_text(new_config.indicator_enabled);
+                    t.update_border_style_text(new_config.border_style.label());
+                }
+
+                // Handle auto-start
+                if app.config.auto_start != new_config.auto_start {
+                    settings::autostart::set_auto_start(new_config.auto_start);
+                }
+
+                // Apply config
+                app.config = new_config;
+
+                // If border was just enabled or settings changed, re-apply to current focus
+                if app.config.border_enabled {
+                    if let Some(ref focus) = app.focus {
+                        let clamped = clamp_to_monitor(&focus.window_rect, &focus.monitor_rect);
+                        if let Some(ref mut bo) = border_overlay {
+                            bo.move_to(&clamped);
+                        }
+                    }
+                } else if border_was_enabled {
+                    if let Some(ref bo) = border_overlay {
+                        bo.hide();
+                    }
+                }
+
+                // Save to disk
+                settings::persistence::save_config(&app.config);
+            }
+            Ok(SettingsMessage::Closed) => {
+                log::info!("Settings window closed");
+                *settings_rx = None;
+                unsafe {
+                    KillTimer(Some(msg_hwnd), TIMER_SETTINGS_POLL).ok();
+                }
+                return;
+            }
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                log::info!("Settings channel disconnected");
+                *settings_rx = None;
+                unsafe {
+                    KillTimer(Some(msg_hwnd), TIMER_SETTINGS_POLL).ok();
+                }
+                return;
+            }
+        }
+    }
 }
 
 /// Query current foreground window and update app state + overlays.
