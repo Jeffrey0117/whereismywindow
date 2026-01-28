@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="where.png" alt="Where Is My Window" width="128" />
+
 # 🪟 Where Is My Window?
 
 **Never lose track of your focused window on multi-monitor setups**
